@@ -30,6 +30,7 @@ npm link
 - **Parameterized Queries**: Pass dynamic parameters to your queries for secure and efficient database operations.
 - **Spread Results Option**: Option to spread the result of a `SELECT` query into multiple items for further processing in n8n.
 - **Error Handling**: Built-in error handling that allows you to continue workflow execution even if an error occurs.
+- **Delete Database Option**: Provides the ability to delete an existing database file from the workflow directory.
 
 ## Compatibility
 
@@ -74,6 +75,12 @@ Normally nodes return 1 value for each items passed.
 ![Select spread](images/select_spread.png)
 
 With spread operator only available for `SELECT` it's possible to return multiple items for every item requested.
+
+### Delete Database
+
+![Delete database](images/delete_db.png)
+
+This option allows you to delete a specific database file. Simply provide the name of the database file to remove it from the workflow directory.
 
 ## Resources
 
