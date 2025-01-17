@@ -3,9 +3,10 @@ import {
 	INodeExecutionData,
 	INodeType,
 	INodeTypeDescription,
-	NodeOperationError,
 } from 'n8n-workflow';
 import * as sqlite3 from 'sqlite3';
+import * as path from 'path';
+import * as fs from 'fs';
 
 export class SqliteNode implements INodeType {
 	description: INodeTypeDescription = {
@@ -14,22 +15,20 @@ export class SqliteNode implements INodeType {
 		icon: 'file:sqlite-icon.svg',
 		group: ['transform'],
 		version: 1,
-		description: 'A node to perform query in a local sqlite database',
+		description: 'A node to perform query in a local SQLite database',
 		defaults: {
 			name: 'Sqlite Node',
 		},
 		inputs: ['main'],
 		outputs: ['main'],
 		properties: [
-			// Node properties which the user gets displayed and
-			// can change on the node.
 			{
-				displayName: 'Database Path',
-				name: 'db_path',
+				displayName: 'Database Name',
+				name: 'dbName',
 				type: 'string',
 				default: '',
-				placeholder: '/path/to/database.sqlite',
-				description: 'The path to the SQLite database file',
+				placeholder: 'my_database',
+				description: 'Name of the database file (without .db extension)',
 				required: true,
 			},
 			{
@@ -40,36 +39,13 @@ export class SqliteNode implements INodeType {
 				noDataExpression: true,
 				required: true,
 				options: [
-					{
-						name: 'AUTO',
-						value: 'AUTO',
-						description: 'Automatically detect the query type',
-					},
-					{
-						name: 'CREATE',
-						value: 'CREATE',
-						description: 'Create a table',
-					},
-					{
-						name: 'DELETE',
-						value: 'DELETE',
-						description: 'Delete rows from a table',
-					},
-					{
-						name: 'INSERT',
-						value: 'INSERT',
-						description: 'Insert rows into a table',
-					},
-					{
-						name: 'SELECT',
-						value: 'SELECT',
-						description: 'Select rows from a table (support for multiple queries)',
-					},
-					{
-						name: 'UPDATE',
-						value: 'UPDATE',
-						description: 'Update rows in a table',
-					},
+					{ name: 'AUTO', value: 'AUTO', description: 'Automatically detect query type' },
+					{ name: 'CREATE', value: 'CREATE', description: 'Create a table' },
+					{ name: 'DELETE', value: 'DELETE', description: 'Delete rows from a table' },
+					{ name: 'INSERT', value: 'INSERT', description: 'Insert rows into a table' },
+					{ name: 'SELECT', value: 'SELECT', description: 'Select rows from a table' },
+					{ name: 'UPDATE', value: 'UPDATE', description: 'Update rows in a table' },
+					{ name: 'Delete Database', value: 'DELETE_DATABASE', description: 'Delete the database file' },
 				],
 			},
 			{
@@ -98,195 +74,72 @@ export class SqliteNode implements INodeType {
 				type: 'boolean',
 				default: false,
 				description: 'Whether the result should be spread into multiple items',
-				displayOptions: {
-					show: {
-						query_type: [
-							'SELECT',
-						],
-					},
-				},				
-			}
+			},
 		],
 	};
 
-	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> 
-	{
+	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
 		const items = this.getInputData();
-		let item: INodeExecutionData;
+		let spreadResults: INodeExecutionData[] = [];
 
-		let spreadResults = [];
-		for(let itemIndex = 0; itemIndex < items.length; itemIndex++) 
-		{
-			try 
-			{
-				item = items[itemIndex];
-				let db_path = this.getNodeParameter('db_path', itemIndex, '') as string;
-				let query = this.getNodeParameter('query', itemIndex, '') as string;
-				let args_string = this.getNodeParameter('args', itemIndex, '') as string;
-				let args = JSON.parse(args_string);
-				let query_type = this.getNodeParameter('query_type', itemIndex, '') as string;
-				let spread = this.getNodeParameter('spread', itemIndex, '') as boolean;
+		const workflowInfo = this.getWorkflow();
+		const workflowId = workflowInfo?.id || 'default_workflow';
 
-				if(query_type === 'AUTO') 
-				{
-					if(query.trim().toUpperCase().includes('SELECT')) 
-						query_type = 'SELECT';
-					else if(query.trim().toUpperCase().includes('INSERT')) 
-						query_type = 'INSERT';
-					else if(query.trim().toUpperCase().includes('UPDATE')) 
-						query_type = 'UPDATE';
-					else if(query.trim().toUpperCase().includes('DELETE')) 
-						query_type = 'DELETE';
-					else if(query.trim().toUpperCase().includes('CREATE')) 
-						query_type = 'CREATE';
-					else 
-						query_type = 'AUTO';
+		const workflowDir = path.resolve('./databases', workflowId);
+		if (!fs.existsSync(workflowDir)) {
+			fs.mkdirSync(workflowDir, { recursive: true });
+		}
+
+		for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
+			try {
+				const dbName = this.getNodeParameter('dbName', itemIndex, '') as string;
+				const queryType = this.getNodeParameter('query_type', itemIndex, 'AUTO') as string;
+
+				const dbPath = path.join(workflowDir, `${dbName}.db`);
+
+				if (queryType === 'DELETE_DATABASE') {
+					if (fs.existsSync(dbPath)) {
+						fs.unlinkSync(dbPath);
+						items[itemIndex].json = { success: true, message: `Database ${dbName} deleted successfully.` };
+					} else {
+						items[itemIndex].json = { success: false, message: `Database ${dbName} does not exist.` };
+					}
+					continue;
 				}
 
-				if(db_path === '') 
-					throw new NodeOperationError(this.getNode(), 'No database path provided.');
-				
+				const query = this.getNodeParameter('query', itemIndex, '') as string;
+				const argsString = this.getNodeParameter('args', itemIndex, '{}') as string;
+				const args = JSON.parse(argsString);
 
-				if(query === '') 
-					throw new NodeOperationError(this.getNode(), 'No query provided.');
+				const db = new sqlite3.Database(dbPath);
 
-				const db = new sqlite3.Database(db_path);
-				const results = await new Promise<any|any[]>(async (resolve, reject) => 
-				{
-					if(query_type === 'SELECT') 
-					{
-						// if query contains multiple queries, split them and execute them one by one
-						let queries = query.split(';').filter(q => q.trim() !== '');
-						if(queries.length > 1)
-						{
-
-							let results = await Promise.all(queries.map(async (q) => 
-							{
-								const query_args = { ...args };
-								for(const key in query_args) 
-								{
-									if(!q.includes(key)) 
-										delete query_args[key];
-								}
-									
-								return await new Promise<any|any[]>(async (resolve1, reject1) => 
-								{
-									// For SELECT queries, use db.all() to get all rows
-									db.all(q, query_args, (error, rows) => 
-									{
-										if(error) 
-											return reject1(error);
-
-										return resolve1(rows);
-									});
-								});
-							}));
-
-							return resolve(results);
-						}
-
-						const query_args = { ...args };
-						for(const key in query_args) 
-						{
-							if(!query.includes(key)) 
-								delete query_args[key];
-						}
-
-						// For SELECT queries, use db.all() to get all rows
-						db.all(query, query_args, (error, rows) => 
-						{
-							if(error) 
-								return reject(error);
-
-							return resolve(rows);
-						});
-					} 
-					else if(['INSERT', 'UPDATE', 'DELETE'].includes(query_type)) 
-					{
-						const query_args = { ...args };
-						for(const key in query_args) 
-						{
-							if(!query.includes(key)) 
-								delete query_args[key];
-						}
-
-						// For INSERT, UPDATE, DELETE queries, use db.run() 
-						db.run(query, query_args, function (error) 
-						{
-							if(error) 
-								return reject(error);
-							// Provide information like affected rows, last inserted id, etc.
-							return resolve({
-								changes: this.changes, // Number of rows affected
-								last_id: this.lastID // The last inserted row ID
-							});
-						});
-					} 
-					else 
-					{
-						const query_args = { ...args };
-						for(const key in query_args) 
-						{
-							if(!query.includes(key)) 
-								delete query_args[key];
-						}
-
-						// For other SQL commands (like CREATE, DROP, etc.), use db.run()
-						db.run(query, query_args, (error) => 
-						{
-							if(error) 
-								return reject(error);
-							return resolve({ message: 'Query executed successfully.' });
+				const results = await new Promise<any[]>((resolve, reject) => {
+					if (queryType === 'SELECT') {
+						db.all(query, args, (error, rows) => (error ? reject(error) : resolve(rows)));
+					} else {
+						db.run(query, args, (error) => {
+							if (error) return reject(error);
+							resolve([{ changes: 1 }]);
 						});
 					}
 				});
+
+				if (queryType === 'SELECT') {
+					results.forEach((result) => spreadResults.push({ json: result }));
+				} else {
+					items[itemIndex].json = results[0];
+				}
+
 				db.close();
-
-				if(query_type === 'SELECT' && spread) 
-				{
-					// If spread is true, spread the result into multiple items
-					const newItems = results.map((result: any) => 
-					{
-						if(Array.isArray(result))
-							return { json: {items: result} }; 
-						else 
-							return { json: result };
-					});
-					
-					spreadResults.push(...newItems);
-				} 
-				else 
-					item.json = results;
-			} 
-			catch(error) 
-			{
-				// This node should never fail but we want to showcase how
-				// to handle errors.
-				if(this.continueOnFail()) 
-				{
-					items.push({ json: this.getInputData(itemIndex)[0].json, error, pairedItem: itemIndex });
-				} 
-				else 
-				{
-					// Adding `itemIndex` allows other workflows to handle this error
-					if(error.context) 
-					{
-						// If the error thrown already contains the context property,
-						// only append the itemIndex
-						error.context.itemIndex = itemIndex;
-						throw error;
-					}
-
-					throw new NodeOperationError(this.getNode(), error, {
-						itemIndex,
-					});
+			} catch (error) {
+				if (this.continueOnFail()) {
+					items[itemIndex].json = { error: error.message };
+				} else {
+					throw error;
 				}
 			}
 		}
 
-		if(spreadResults.length > 0) 
-			return this.prepareOutputData(spreadResults);
-
-		return this.prepareOutputData(items);
+		return spreadResults.length > 0 ? this.prepareOutputData(spreadResults) : this.prepareOutputData(items);
 	}
 }

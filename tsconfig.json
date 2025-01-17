@@ -20,10 +20,11 @@
 		"sourceMap": true,
 		"skipLibCheck": true,
 		"outDir": "./dist/",
+		"types": ["node"]
 	},
 	"include": [
 		"nodes/**/*",
 		"nodes/**/*.json",
-		"package.json",
-	],
+		"package.json"
+	]
 }
