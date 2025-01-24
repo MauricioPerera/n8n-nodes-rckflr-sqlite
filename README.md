@@ -1,4 +1,4 @@
-# rckflr-n8n-sqlite-node
+# n8n-nodes-rckflr-sqlite
 
 This is an n8n community node. It lets you use SQLite3 in your n8n workflows.
 
