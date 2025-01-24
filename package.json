@@ -1,6 +1,6 @@
 {
-  "name": "n8n-nodes-sqlite3",
-  "version": "0.1.2",
+  "name": "n8n-nodes-rckflr-sqlite",
+  "version": "0.1.4",
   "description": "Custom n8n nodes for interacting with SQLite3 databases through SQL queries",
   "keywords": [
     "n8n-community-node-package",
@@ -15,7 +15,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/DangerBlack/n8n-node-sqlite3.git"
+    "url": "https://github.com/MauricioPerera/n8n-nodes-rckflr-sqlite.git"
   },
   "main": "index.js",
   "scripts": {
